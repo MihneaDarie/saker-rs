@@ -1,0 +1,9 @@
+[package]
+name = "saker-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Fast SIMD-accelerated linear algebra"
+license = "MIT"
+
+[dependencies]
+rayon = "1.11.0"
