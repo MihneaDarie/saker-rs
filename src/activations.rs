@@ -2,6 +2,7 @@
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Activation {
     Sigmoid,
+    Relu,
     Silu,
     #[default]
     None,

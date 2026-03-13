@@ -31,3 +31,13 @@ pub fn aprox_sigmoid_f32(x: f32) -> f32 {
 pub fn aprox_sigmoid_f64(x: f64) -> f64 {
     aprox_silu_f64(x) / x
 }
+
+#[inline(always)]
+pub fn relu_f32(x: f32) -> f32 {
+    x.max(0.0)
+}
+
+#[inline(always)]
+pub fn relu_f64(x: f64) -> f64 {
+    x.max(0.0)
+}

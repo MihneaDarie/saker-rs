@@ -6,8 +6,7 @@ use std::arch::x86_64::*;
 use crate::activations::Activation;
 #[cfg(target_arch = "x86_64")]
 use crate::{
-    accumulate_simd, fmadd_ps_simd, linarg::utils::aprox_silu_f32, set_zero_simd, set1_ps_simd,
-    storeu_ps_simd,
+    accumulate_simd, fmadd_ps_simd, linarg::utils::{relu_f32, aprox_silu_f32}, set_zero_simd, set1_ps_simd, storeu_ps_simd
 };
 
 const MC: usize = 64;
@@ -102,7 +101,6 @@ unsafe fn micro_kernel_16x16_avx_512(
         }
 
         if accumulate {
-
             accumulate_simd!(_mm512_loadu_ps,_mm512_storeu_ps,_mm512_add_ps, c, ldc =>  c0: 0, c1: 1, c2: 2, c3: 3,
                                                                                         c4: 4, c5: 5, c6: 6, c7: 7,
                                                                                         c8: 8, c9: 9, c10:10, c11:11,
@@ -112,6 +110,38 @@ unsafe fn micro_kernel_16x16_avx_512(
                                                     c4: 4, c5: 5, c6: 6, c7: 7,
                                                     c8: 8, c9: 9, c10:10, c11:11,
                                                     c12:12, c13:13, c14:14, c15:15,);
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn relu_avx512(x: __m512) -> __m512 {
+    let zeros = _mm512_setzero_ps();
+    _mm512_max_ps(x, zeros)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+pub unsafe fn apply_relu_avx512(dst: *mut f32, n: usize) {
+    unsafe {
+        for i in (0..n).step_by(8) {
+            let val = _mm512_loadu_ps(dst.add(i));
+            let activated = relu_avx512(val);
+            _mm512_storeu_ps(dst.add(i), activated);
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn apply_relu_and_bias_avx512(c: *mut f32, n: usize, bias: f32) {
+    let bias_v = _mm512_set1_ps(bias);
+    unsafe {
+        for i in (0..n).step_by(8) {
+            let val = _mm512_loadu_ps(c.add(i));
+            let activated = relu_avx512(_mm512_add_ps(val, bias_v));
+            _mm512_storeu_ps(c.add(i), activated);
         }
     }
 }
@@ -252,6 +282,11 @@ pub fn gemm_bias_blocked_scalar(
                     apply_silu_and_bias_avx512(row.as_mut_ptr(), n, bias[i]);
                 });
             }
+            Activation::Relu => {
+                c.par_chunks_mut(n).enumerate().for_each(|(i, row)| unsafe {
+                    apply_relu_and_bias_avx512(row.as_mut_ptr(), n, bias[i]);
+                });
+            }
             Activation::None => {
                 c.par_chunks_mut(n).enumerate().for_each(|(i, row)| unsafe {
                     apply_bias_avx512(row.as_mut_ptr(), n, bias[i]);
@@ -267,6 +302,11 @@ pub fn gemm_bias_blocked_scalar(
             Activation::Silu => {
                 c.par_chunks_mut(n).for_each(|row| unsafe {
                     apply_silu_avx512(row.as_mut_ptr(), row.len());
+                });
+            }
+            Activation::Relu => {
+                c.par_chunks_mut(n).for_each(|row| unsafe {
+                    apply_relu_avx512(row.as_mut_ptr(), row.len());
                 });
             }
             Activation::None => {}
@@ -353,6 +393,11 @@ pub unsafe fn gemm_bias_blocked_avx512(
                     apply_silu_and_bias_avx512(row.as_mut_ptr(), n, bias[i]);
                 });
             }
+            Activation::Relu => {
+                c.par_chunks_mut(n).enumerate().for_each(|(i, row)| unsafe {
+                    apply_relu_and_bias_avx512(row.as_mut_ptr(), n, bias[i]);
+                });
+            }
             Activation::None => {
                 c.par_chunks_mut(n).enumerate().for_each(|(i, row)| unsafe {
                     apply_bias_avx512(row.as_mut_ptr(), n, bias[i]);
@@ -368,6 +413,11 @@ pub unsafe fn gemm_bias_blocked_avx512(
             Activation::Silu => {
                 c.par_chunks_mut(n).for_each(|row| unsafe {
                     apply_silu_avx512(row.as_mut_ptr(), row.len());
+                });
+            }
+            Activation::Relu => {
+                c.par_chunks_mut(n).for_each(|row| unsafe {
+                    apply_relu_avx512(row.as_mut_ptr(), row.len());
                 });
             }
             Activation::None => {}
@@ -446,6 +496,23 @@ pub unsafe fn apply_silu_avx512_from_src(dst: *mut f32, src: *const f32, n: usiz
         for i in chunks..n {
             let x = *src.add(i);
             *dst.add(i) = aprox_silu_f32(x);
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,fma")]
+pub unsafe fn apply_relu_avx512_from_src(dst: *mut f32, src: *const f32, n: usize) {
+    unsafe {
+        let chunks = n / 16 * 16;
+        for i in (0..chunks).step_by(16) {
+            let val = _mm512_loadu_ps(src.add(i));
+            let activated = relu_avx512(val);
+            _mm512_storeu_ps(dst.add(i), activated);
+        }
+        for i in chunks..n {
+            let x = *src.add(i);
+            *dst.add(i) = relu_f32(x);
         }
     }
 }

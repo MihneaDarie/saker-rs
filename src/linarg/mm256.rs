@@ -5,7 +5,7 @@ use std::arch::x86_64::*;
 
 #[cfg(target_arch = "x86_64")]
 use crate::{
-    accumulate_simd, activations::Activation, fmadd_ps_simd, set_zero_simd, set1_ps_simd,
+    accumulate_simd, activations::Activation, fmadd_ps_simd, set1_ps_simd, set_zero_simd,
     storeu_ps_simd,
 };
 
@@ -90,6 +90,38 @@ unsafe fn micro_kernel_8x8_avx2(
             storeu_ps_simd!(_mm256_storeu_ps,c,ldc => c0: 0, c1: 1, c2: 2, c3: 3,
             c4: 4, c5: 5, c6: 6, c7: 7,
             );
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn relu_avx2(x: __m256) -> __m256 {
+    let zeros = _mm256_setzero_ps();
+    _mm256_max_ps(x, zeros)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+pub unsafe fn apply_relu_avx2(dst: *mut f32, n: usize) {
+    unsafe {
+        for i in (0..n).step_by(8) {
+            let val = _mm256_loadu_ps(dst.add(i));
+            let activated = relu_avx2(val);
+            _mm256_storeu_ps(dst.add(i), activated);
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn apply_relu_and_bias_avx2(c: *mut f32, n: usize, bias: f32) {
+    let bias_v = _mm256_set1_ps(bias);
+    unsafe {
+        for i in (0..n).step_by(8) {
+            let val = _mm256_loadu_ps(c.add(i));
+            let activated = relu_avx2(_mm256_add_ps(val, bias_v));
+            _mm256_storeu_ps(c.add(i), activated);
         }
     }
 }
@@ -245,6 +277,11 @@ pub unsafe fn gemm_bias_blocked_avx2(
                     apply_silu_and_bias_avx2(row.as_mut_ptr(), n, bias[i]);
                 });
             }
+            Activation::Relu => {
+                c.par_chunks_mut(n).enumerate().for_each(|(i, row)| unsafe {
+                    apply_relu_and_bias_avx2(row.as_mut_ptr(), n, bias[i]);
+                });
+            }
             Activation::None => {
                 c.par_chunks_mut(n).enumerate().for_each(|(i, row)| unsafe {
                     apply_bias_avx2(row.as_mut_ptr(), n, bias[i]);
@@ -260,6 +297,11 @@ pub unsafe fn gemm_bias_blocked_avx2(
             Activation::Silu => {
                 c.par_chunks_mut(n).for_each(|row| unsafe {
                     apply_silu_avx2(row.as_mut_ptr(), row.len());
+                });
+            }
+            Activation::Relu => {
+                c.par_chunks_mut(n).for_each(|row| unsafe {
+                    apply_relu_avx2(row.as_mut_ptr(), row.len());
                 });
             }
             Activation::None => {}
@@ -334,6 +376,18 @@ pub unsafe fn apply_silu_avx2_from_src(dst: *mut f32, src: *const f32, n: usize)
         for i in (0..n).step_by(8) {
             let val = _mm256_loadu_ps(src.add(i));
             let activated = silu_avx2(val);
+            _mm256_storeu_ps(dst.add(i), activated);
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+pub unsafe fn apply_relu_avx2_from_src(dst: *mut f32, src: *const f32, n: usize) {
+    unsafe {
+        for i in (0..n).step_by(8) {
+            let val = _mm256_loadu_ps(src.add(i));
+            let activated = relu_avx2(val);
             _mm256_storeu_ps(dst.add(i), activated);
         }
     }

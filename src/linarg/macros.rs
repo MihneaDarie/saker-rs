@@ -1,4 +1,3 @@
-
 #[macro_export]
 macro_rules! set1_ps_simd {
     ($func:path, $a:expr, $lda:expr, $p:expr => $( $name:ident : $i:expr ),+ $(,)?) => {
