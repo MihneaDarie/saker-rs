@@ -6,7 +6,9 @@ use std::arch::x86_64::*;
 use crate::activations::Activation;
 #[cfg(target_arch = "x86_64")]
 use crate::{
-    accumulate_simd, fmadd_ps_simd, linarg::utils::{relu_f32, aprox_silu_f32}, set_zero_simd, set1_ps_simd, storeu_ps_simd
+    accumulate_simd, fmadd_ps_simd,
+    linarg::utils::{aprox_silu_f32, relu_f32},
+    set1_ps_simd, set_zero_simd, storeu_ps_simd,
 };
 
 const MC: usize = 64;
@@ -122,65 +124,77 @@ unsafe fn relu_avx512(x: __m512) -> __m512 {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2,fma")]
-pub unsafe fn apply_relu_avx512(dst: *mut f32, n: usize) {
-    unsafe {
-        for i in (0..n).step_by(8) {
-            let val = _mm512_loadu_ps(dst.add(i));
-            let activated = relu_avx512(val);
-            _mm512_storeu_ps(dst.add(i), activated);
-        }
+#[target_feature(enable = "avx512f")]
+pub unsafe fn apply_relu_avx512(ptr: *mut f32, n: usize) {
+    let chunks = n / 16 * 16;
+    let zero = _mm512_setzero_ps();
+    for i in (0..chunks).step_by(16) {
+        let v = _mm512_loadu_ps(ptr.add(i));
+        _mm512_storeu_ps(ptr.add(i), _mm512_max_ps(v, zero));
+    }
+    for i in chunks..n {
+        let x = *ptr.add(i);
+        *ptr.add(i) = x.max(0.0);
     }
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2,fma")]
-unsafe fn apply_relu_and_bias_avx512(c: *mut f32, n: usize, bias: f32) {
-    let bias_v = _mm512_set1_ps(bias);
-    unsafe {
-        for i in (0..n).step_by(8) {
-            let val = _mm512_loadu_ps(c.add(i));
-            let activated = relu_avx512(_mm512_add_ps(val, bias_v));
-            _mm512_storeu_ps(c.add(i), activated);
-        }
+#[target_feature(enable = "avx512f")]
+pub unsafe fn apply_relu_and_bias_avx512(ptr: *mut f32, n: usize, bias: f32) {
+    let chunks = n / 16 * 16;
+    let b = _mm512_set1_ps(bias);
+    let zero = _mm512_setzero_ps();
+    for i in (0..chunks).step_by(16) {
+        let v = _mm512_add_ps(_mm512_loadu_ps(ptr.add(i)), b);
+        _mm512_storeu_ps(ptr.add(i), _mm512_max_ps(v, zero));
+    }
+    for i in chunks..n {
+        let x = *ptr.add(i) + bias;
+        *ptr.add(i) = x.max(0.0);
     }
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,fma")]
-unsafe fn apply_silu_and_bias_avx512(c: *mut f32, n: usize, bias: f32) {
-    let bias_v = _mm512_set1_ps(bias);
-    unsafe {
-        for i in (0..n).step_by(16) {
-            let val = _mm512_loadu_ps(c.add(i));
-            let activated = silu_avx512(_mm512_add_ps(val, bias_v));
-            _mm512_storeu_ps(c.add(i), activated);
-        }
+#[target_feature(enable = "avx512f")]
+pub unsafe fn apply_silu_and_bias_avx512(ptr: *mut f32, n: usize, bias: f32) {
+    let chunks = n / 16 * 16;
+    let b = _mm512_set1_ps(bias);
+    for i in (0..chunks).step_by(16) {
+        let v = _mm512_add_ps(_mm512_loadu_ps(ptr.add(i)), b);
+        _mm512_storeu_ps(ptr.add(i), silu_avx512(v));
+    }
+    for i in chunks..n {
+        let x = *ptr.add(i) + bias;
+        *ptr.add(i) = x / (1.0 + (-x).exp());
     }
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,fma")]
-unsafe fn apply_sigmoid_and_bias_avx512(c: *mut f32, n: usize, bias: f32) {
-    let bias_v = _mm512_set1_ps(bias);
-    unsafe {
-        for i in (0..n).step_by(16) {
-            let val = _mm512_loadu_ps(c.add(i));
-            let activated = sigmoid_avx512(_mm512_add_ps(val, bias_v));
-            _mm512_storeu_ps(c.add(i), activated);
-        }
+#[target_feature(enable = "avx512f")]
+pub unsafe fn apply_sigmoid_and_bias_avx512(ptr: *mut f32, n: usize, bias: f32) {
+    let chunks = n / 16 * 16;
+    let b = _mm512_set1_ps(bias);
+    for i in (0..chunks).step_by(16) {
+        let v = _mm512_add_ps(_mm512_loadu_ps(ptr.add(i)), b);
+        _mm512_storeu_ps(ptr.add(i), sigmoid_avx512(v));
+    }
+    for i in chunks..n {
+        let x = *ptr.add(i) + bias;
+        *ptr.add(i) = 1.0 / (1.0 + (-x).exp());
     }
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,fma")]
-unsafe fn apply_bias_avx512(c: *mut f32, n: usize, bias: f32) {
-    let bias_v = _mm512_set1_ps(bias);
-    unsafe {
-        for i in (0..n).step_by(16) {
-            let val = _mm512_loadu_ps(c.add(i));
-            _mm512_storeu_ps(c.add(i), _mm512_add_ps(val, bias_v));
-        }
+#[target_feature(enable = "avx512f")]
+pub unsafe fn apply_bias_avx512(ptr: *mut f32, n: usize, bias: f32) {
+    let chunks = n / 16 * 16;
+    let b = _mm512_set1_ps(bias);
+    for i in (0..chunks).step_by(16) {
+        let v = _mm512_loadu_ps(ptr.add(i));
+        _mm512_storeu_ps(ptr.add(i), _mm512_add_ps(v, b));
+    }
+    for i in chunks..n {
+        *ptr.add(i) += bias;
     }
 }
 
@@ -273,40 +287,55 @@ pub fn gemm_bias_blocked_scalar(
     match bias {
         Some(bias) => match activation {
             Activation::Sigmoid => {
-                c.par_chunks_mut(n).enumerate().for_each(|(i, row)| unsafe {
-                    apply_sigmoid_and_bias_avx512(row.as_mut_ptr(), n, bias[i]);
+                c.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+                    let b = bias[i];
+                    for v in row.iter_mut() {
+                        let x = *v + b;
+                        *v = 1.0 / (1.0 + (-x).exp());
+                    }
                 });
             }
             Activation::Silu => {
-                c.par_chunks_mut(n).enumerate().for_each(|(i, row)| unsafe {
-                    apply_silu_and_bias_avx512(row.as_mut_ptr(), n, bias[i]);
+                c.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+                    let b = bias[i];
+                    for v in row.iter_mut() {
+                        let x = *v + b;
+                        *v = x / (1.0 + (-x).exp());
+                    }
                 });
             }
             Activation::Relu => {
-                c.par_chunks_mut(n).enumerate().for_each(|(i, row)| unsafe {
-                    apply_relu_and_bias_avx512(row.as_mut_ptr(), n, bias[i]);
+                c.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+                    let b = bias[i];
+                    for v in row.iter_mut() {
+                        *v = (*v + b).max(0.0);
+                    }
                 });
             }
             Activation::None => {
-                c.par_chunks_mut(n).enumerate().for_each(|(i, row)| unsafe {
-                    apply_bias_avx512(row.as_mut_ptr(), n, bias[i]);
+                c.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+                    let b = bias[i];
+                    for v in row.iter_mut() {
+                        *v += b;
+                    }
                 });
             }
         },
         None => match activation {
             Activation::Sigmoid => {
-                c.par_chunks_mut(n).for_each(|row| unsafe {
-                    apply_sigmoid_avx512(row.as_mut_ptr(), row.len());
+                c.par_iter_mut().for_each(|v| {
+                    *v = 1.0 / (1.0 + (-*v).exp());
                 });
             }
             Activation::Silu => {
-                c.par_chunks_mut(n).for_each(|row| unsafe {
-                    apply_silu_avx512(row.as_mut_ptr(), row.len());
+                c.par_iter_mut().for_each(|v| {
+                    let x = *v;
+                    *v = x / (1.0 + (-x).exp());
                 });
             }
             Activation::Relu => {
-                c.par_chunks_mut(n).for_each(|row| unsafe {
-                    apply_relu_avx512(row.as_mut_ptr(), row.len());
+                c.par_iter_mut().for_each(|v| {
+                    *v = v.max(0.0);
                 });
             }
             Activation::None => {}
@@ -460,26 +489,30 @@ pub unsafe fn sigmoid_avx512(x: __m512) -> __m512 {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,fma")]
-pub unsafe fn apply_silu_avx512(dst: *mut f32, n: usize) {
-    unsafe {
-        for i in (0..n).step_by(16) {
-            let val = _mm512_loadu_ps(dst.add(i));
-            let activated = silu_avx512(val);
-            _mm512_storeu_ps(dst.add(i), activated);
-        }
+#[target_feature(enable = "avx512f")]
+pub unsafe fn apply_silu_avx512(ptr: *mut f32, n: usize) {
+    let chunks = n / 16 * 16;
+    for i in (0..chunks).step_by(16) {
+        let v = _mm512_loadu_ps(ptr.add(i));
+        _mm512_storeu_ps(ptr.add(i), silu_avx512(v));
+    }
+    for i in chunks..n {
+        let x = *ptr.add(i);
+        *ptr.add(i) = x / (1.0 + (-x).exp());
     }
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,fma")]
-pub unsafe fn apply_sigmoid_avx512(dst: *mut f32, n: usize) {
-    unsafe {
-        for i in (0..n).step_by(16) {
-            let val = _mm512_loadu_ps(dst.add(i));
-            let activated = sigmoid_avx512(val);
-            _mm512_storeu_ps(dst.add(i), activated);
-        }
+#[target_feature(enable = "avx512f")]
+pub unsafe fn apply_sigmoid_avx512(ptr: *mut f32, n: usize) {
+    let chunks = n / 16 * 16;
+    for i in (0..chunks).step_by(16) {
+        let v = _mm512_loadu_ps(ptr.add(i));
+        _mm512_storeu_ps(ptr.add(i), sigmoid_avx512(v));
+    }
+    for i in chunks..n {
+        let x = *ptr.add(i);
+        *ptr.add(i) = 1.0 / (1.0 + (-x).exp());
     }
 }
 

@@ -55,7 +55,7 @@ impl AppContext {
             return Ok(context);
         }
 
-        if args.len().is_multiple_of(2){
+        if args.len().is_multiple_of(2) {
             return Err("Odd number of arguments !".to_string());
         }
 
