@@ -9,15 +9,20 @@ use rayon::{
 #[cfg(target_arch = "x86_64")]
 use crate::linarg::mm512::gemm_bias_blocked_avx512;
 use crate::{
-    activations::Activation, appcontext::{Device, GemmType, get_global_context}, linarg::{
+    activations::Activation,
+    appcontext::{get_global_context, Device, GemmType},
+    linarg::{
         mm256::{
-            add_avx2, apply_relu_avx2_from_src, apply_sigmoid_avx2_from_src, apply_silu_avx2_from_src, div_avx2, gemm_bias_blocked_avx2, mul_avx2, sub_avx2
+            add_avx2, apply_relu_avx2_from_src, apply_sigmoid_avx2_from_src,
+            apply_silu_avx2_from_src, div_avx2, gemm_bias_blocked_avx2, mul_avx2, sub_avx2,
         },
         mm512::{
-            add_avx512, apply_relu_avx512_from_src, apply_sigmoid_avx512_from_src, apply_silu_avx512_from_src, div_avx512, gemm_bias_blocked_scalar, mul_avx512, sub_avx512
+            add_avx512, apply_relu_avx512_from_src, apply_sigmoid_avx512_from_src,
+            apply_silu_avx512_from_src, div_avx512, gemm_bias_blocked_scalar, mul_avx512,
+            sub_avx512,
         },
         utils::{aprox_sigmoid_f32, aprox_silu_f32, relu_f32},
-    }
+    },
 };
 
 pub fn sgemm_bias_parallel(
@@ -53,17 +58,18 @@ pub fn sgemm_bias_parallel(
 
 const CHUNK_SIZE: usize = 32_768;
 
-pub fn apply_silu(dst: &mut [f32], src: &[f32], n: usize) {
+pub fn apply_silu(dst: &mut [f32], src: &[f32]) {
     let context = get_global_context();
+    let len = dst.len();
     let dst_ptr = dst.as_mut_ptr();
     let src_ptr = src.as_ptr();
 
     match context.get_gemm_type() {
         GemmType::Avx2 => {
-            unsafe { apply_silu_avx2_from_src(dst_ptr, src_ptr, n) };
+            unsafe { apply_silu_avx2_from_src(dst_ptr, src_ptr, len) };
         }
         GemmType::Avx512 => unsafe {
-            apply_silu_avx512_from_src(dst_ptr, src_ptr, n);
+            apply_silu_avx512_from_src(dst_ptr, src_ptr, len);
         },
         _ => {
             dst.par_iter_mut()
@@ -73,17 +79,18 @@ pub fn apply_silu(dst: &mut [f32], src: &[f32], n: usize) {
     }
 }
 
-pub fn apply_relu(dst: &mut [f32], src: &[f32], n: usize) {
+pub fn apply_relu(dst: &mut [f32], src: &[f32]) {
     let context = get_global_context();
+    let len = dst.len();
     let dst_ptr = dst.as_mut_ptr();
     let src_ptr = src.as_ptr();
 
     match context.get_gemm_type() {
         GemmType::Avx2 => {
-            unsafe { apply_relu_avx2_from_src(dst_ptr, src_ptr, n) };
+            unsafe { apply_relu_avx2_from_src(dst_ptr, src_ptr, len) };
         }
         GemmType::Avx512 => unsafe {
-            apply_relu_avx512_from_src(dst_ptr, src_ptr, n);
+            apply_relu_avx512_from_src(dst_ptr, src_ptr, len);
         },
         _ => {
             dst.par_iter_mut()
