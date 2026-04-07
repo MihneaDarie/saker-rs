@@ -457,6 +457,7 @@ pub unsafe fn gemm_bias_blocked_avx512(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,fma")]
 pub unsafe fn sigmoid_avx512(x: __m512) -> __m512 {
+    let x = _mm512_add_ps(x, _mm512_set1_ps(f32::EPSILON));
     let left_margin = _mm512_set1_ps(-4.0);
     let right_margin = _mm512_set1_ps(4.0);
     let zeros = _mm512_setzero_ps();

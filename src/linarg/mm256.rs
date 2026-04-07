@@ -312,6 +312,7 @@ pub unsafe fn gemm_bias_blocked_avx2(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 pub unsafe fn sigmoid_avx2(x: __m256) -> __m256 {
+    let x = _mm256_add_ps(x, _mm256_set1_ps(f32::EPSILON));
     let left_margin = _mm256_set1_ps(-4.0);
     let right_margin = _mm256_set1_ps(4.0);
     let zeros = _mm256_setzero_ps();
