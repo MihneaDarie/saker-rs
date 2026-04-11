@@ -58,230 +58,99 @@ pub fn sgemm_bias_parallel(
 
 const CHUNK_SIZE: usize = 32_768;
 
-pub fn apply_silu(dst: &mut [f32], src: &[f32]) {
-    let context = get_global_context();
-    let len = dst.len();
-    let dst_ptr = dst.as_mut_ptr();
-    let src_ptr = src.as_ptr();
+macro_rules! apply_activation_from_src {
+    ($func_name:ident, $avx2_func:ident, $avx512_func:ident, $single_activation_func:ident) => {
+        pub fn $func_name(dst: &mut [f32], src: &[f32]) {
+            let context = get_global_context();
+            let len = dst.len();
+            let dst_ptr = dst.as_mut_ptr();
+            let src_ptr = src.as_ptr();
 
-    match context.get_gemm_type() {
-        GemmType::Avx2 => {
-            unsafe { apply_silu_avx2_from_src(dst_ptr, src_ptr, len) };
+            match context.get_gemm_type() {
+                GemmType::Avx2 => {
+                    unsafe { $avx2_func(dst_ptr, src_ptr, len) };
+                }
+                GemmType::Avx512 => unsafe {
+                    $avx512_func(dst_ptr, src_ptr, len);
+                },
+                _ => {
+                    dst.par_iter_mut()
+                        .zip(src.par_iter())
+                        .for_each(|(d, s)| *d = $single_activation_func(*s));
+                }
+            }
         }
-        GemmType::Avx512 => unsafe {
-            apply_silu_avx512_from_src(dst_ptr, src_ptr, len);
-        },
-        _ => {
-            dst.par_iter_mut()
-                .zip(src.par_iter())
-                .for_each(|(d, s)| *d = aprox_silu_f32(*s));
-        }
-    }
+    };
 }
 
-pub fn apply_relu(dst: &mut [f32], src: &[f32]) {
-    let context = get_global_context();
-    let len = dst.len();
-    let dst_ptr = dst.as_mut_ptr();
-    let src_ptr = src.as_ptr();
+apply_activation_from_src!(
+    apply_silu,
+    apply_silu_avx2_from_src,
+    apply_silu_avx512_from_src,
+    aprox_silu_f32
+);
 
-    match context.get_gemm_type() {
-        GemmType::Avx2 => {
-            unsafe { apply_relu_avx2_from_src(dst_ptr, src_ptr, len) };
+apply_activation_from_src!(
+    apply_relu,
+    apply_relu_avx2_from_src,
+    apply_relu_avx512_from_src,
+    relu_f32
+);
+
+apply_activation_from_src!(
+    apply_sigmoid,
+    apply_sigmoid_avx2_from_src,
+    apply_sigmoid_avx512_from_src,
+    aprox_sigmoid_f32
+);
+
+macro_rules! something_maybe_simd {
+    ($func_name:ident, $axv2_func:ident, $avx512_func:ident, $op:tt) => {
+        pub fn $func_name(a: &[f32], b: &[f32], dst: &mut [f32]) {
+            match get_global_context().get_gemm_type() {
+                GemmType::Avx2 => {
+                    dst.par_chunks_mut(CHUNK_SIZE)
+                        .enumerate()
+                        .for_each(|(i, dst_chunk)| {
+                            let offset = CHUNK_SIZE * i;
+                            let len = dst_chunk.len();
+                            unsafe {
+                                $axv2_func(
+                                    a.as_ptr().add(offset),
+                                    b.as_ptr().add(offset),
+                                    dst_chunk.as_mut_ptr(),
+                                    len,
+                                )
+                            };
+                        });
+                }
+                GemmType::Avx512 => {
+                    dst.par_chunks_mut(CHUNK_SIZE)
+                        .enumerate()
+                        .for_each(|(i, dst_chunk)| {
+                            let offset = CHUNK_SIZE * i;
+                            let len = dst_chunk.len();
+                            unsafe {
+                                $avx512_func(
+                                    a.as_ptr().add(offset),
+                                    b.as_ptr().add(offset),
+                                    dst_chunk.as_mut_ptr(),
+                                    len,
+                                )
+                            };
+                        });
+                }
+                _ => {
+                    dst.par_iter_mut()
+                        .zip(a.par_iter().zip(b.par_iter()))
+                        .for_each(|(d, (a, b))| *d = *a $op *b);
+                }
+            }
         }
-        GemmType::Avx512 => unsafe {
-            apply_relu_avx512_from_src(dst_ptr, src_ptr, len);
-        },
-        _ => {
-            dst.par_iter_mut()
-                .zip(src.par_iter())
-                .for_each(|(d, s)| *d = relu_f32(*s));
-        }
-    }
+    };
 }
 
-pub fn apply_sigmoid(dst: &mut [f32], src: &[f32]) {
-    match get_global_context().get_gemm_type() {
-        GemmType::Avx2 => {
-            dst.par_chunks_mut(CHUNK_SIZE)
-                .enumerate()
-                .for_each(|(i, dst_chunk)| {
-                    let offset = CHUNK_SIZE * i;
-                    let len = dst_chunk.len();
-                    unsafe {
-                        apply_sigmoid_avx2_from_src(
-                            dst_chunk.as_mut_ptr(),
-                            src.as_ptr().add(offset),
-                            len,
-                        )
-                    };
-                });
-        }
-        GemmType::Avx512 => {
-            dst.par_chunks_mut(CHUNK_SIZE)
-                .enumerate()
-                .for_each(|(i, dst_chunk)| {
-                    let offset = CHUNK_SIZE * i;
-                    let len = dst_chunk.len();
-                    unsafe {
-                        apply_sigmoid_avx512_from_src(
-                            dst_chunk.as_mut_ptr(),
-                            src.as_ptr().add(offset),
-                            len,
-                        )
-                    };
-                });
-        }
-        _ => {
-            dst.par_iter_mut()
-                .zip(src.par_iter())
-                .for_each(|(d, s)| *d = aprox_sigmoid_f32(*s));
-        }
-    }
-}
-
-pub fn add_maybe_simd(a: &[f32], b: &[f32], dst: &mut [f32]) {
-    match get_global_context().get_gemm_type() {
-        GemmType::Avx2 => {
-            dst.par_chunks_mut(CHUNK_SIZE)
-                .enumerate()
-                .for_each(|(i, dst_chunk)| {
-                    let offset = CHUNK_SIZE * i;
-                    let len = dst_chunk.len();
-                    unsafe {
-                        add_avx2(
-                            a.as_ptr().add(offset),
-                            b.as_ptr().add(offset),
-                            dst_chunk.as_mut_ptr(),
-                            len,
-                        )
-                    };
-                });
-        }
-        GemmType::Avx512 => {
-            dst.par_chunks_mut(CHUNK_SIZE)
-                .enumerate()
-                .for_each(|(i, dst_chunk)| {
-                    let offset = CHUNK_SIZE * i;
-                    let len = dst_chunk.len();
-                    unsafe {
-                        add_avx512(
-                            a.as_ptr().add(offset),
-                            b.as_ptr().add(offset),
-                            dst_chunk.as_mut_ptr(),
-                            len,
-                        )
-                    };
-                });
-        }
-        _ => {
-            dst.par_iter_mut()
-                .zip(a.par_iter().zip(b.par_iter()))
-                .for_each(|(d, (a, b))| *d = *a + *b);
-        }
-    }
-}
-
-pub fn sub_maybe_simd(a: &[f32], b: &[f32], dst: &mut [f32]) {
-    match get_global_context().get_gemm_type() {
-        GemmType::Avx2 => {
-            dst.par_chunks_mut(CHUNK_SIZE)
-                .enumerate()
-                .for_each(|(i, dst_chunk)| {
-                    let offset = CHUNK_SIZE * i;
-                    let len = dst_chunk.len();
-                    unsafe {
-                        sub_avx2(
-                            a.as_ptr().add(offset),
-                            b.as_ptr().add(offset),
-                            dst_chunk.as_mut_ptr(),
-                            len,
-                        )
-                    };
-                });
-        }
-        GemmType::Avx512 => {
-            dst.par_chunks_mut(CHUNK_SIZE)
-                .enumerate()
-                .for_each(|(i, dst_chunk)| {
-                    let offset = CHUNK_SIZE * i;
-                    let len = dst_chunk.len();
-                    unsafe {
-                        sub_avx512(
-                            a.as_ptr().add(offset),
-                            b.as_ptr().add(offset),
-                            dst_chunk.as_mut_ptr(),
-                            len,
-                        )
-                    };
-                });
-        }
-        _ => {
-            dst.par_iter_mut()
-                .zip(a.par_iter().zip(b.par_iter()))
-                .for_each(|(d, (a, b))| *d = *a - *b);
-        }
-    }
-}
-
-pub fn mul_maybe_simd(a: &[f32], b: &[f32], dst: &mut [f32]) {
-    match get_global_context().get_gemm_type() {
-        GemmType::Avx2 => {
-            dst.par_chunks_mut(CHUNK_SIZE)
-                .enumerate()
-                .for_each(|(i, dst_chunk)| {
-                    let offset = i * CHUNK_SIZE;
-                    let len = dst_chunk.len();
-                    unsafe {
-                        mul_avx2(
-                            a.as_ptr().add(offset),
-                            b.as_ptr().add(offset),
-                            dst_chunk.as_mut_ptr(),
-                            len,
-                        )
-                    };
-                });
-        }
-        GemmType::Avx512 => {
-            dst.par_chunks_mut(CHUNK_SIZE)
-                .enumerate()
-                .for_each(|(i, dst_chunk)| {
-                    let offset = CHUNK_SIZE * i;
-                    let len = dst_chunk.len();
-                    unsafe {
-                        mul_avx512(
-                            a.as_ptr().add(offset),
-                            b.as_ptr().add(offset),
-                            dst_chunk.as_mut_ptr(),
-                            len,
-                        )
-                    };
-                });
-        }
-        _ => {
-            dst.par_iter_mut()
-                .zip(a.par_iter().zip(b.par_iter()))
-                .for_each(|(d, (a, b))| *d = *a * *b);
-        }
-    }
-}
-
-pub fn div_maybe_simd(a: &[f32], b: &[f32], dst: &mut [f32], n: usize) {
-    let dst_ptr_mut = dst.as_mut_ptr();
-    let sa_ptr = a.as_ptr();
-    let sb_ptr = b.as_ptr();
-
-    match get_global_context().get_gemm_type() {
-        GemmType::Avx2 => {
-            unsafe { div_avx2(sa_ptr, sb_ptr, dst_ptr_mut, n) };
-        }
-        GemmType::Avx512 => {
-            unsafe { div_avx512(sa_ptr, sb_ptr, dst_ptr_mut, n) };
-        }
-        _ => {
-            dst.par_iter_mut()
-                .zip(a.par_iter().zip(b.par_iter()))
-                .for_each(|(d, (a, b))| *d = *a / *b);
-        }
-    }
-}
+something_maybe_simd!(add_maybe_simd, add_avx2, add_avx512, +);
+something_maybe_simd!(sub_maybe_simd, sub_avx2, sub_avx512, -);
+something_maybe_simd!(mul_maybe_simd, mul_avx2, mul_avx512, *);
+something_maybe_simd!(div_maybe_simd, div_avx2, div_avx512, /);
