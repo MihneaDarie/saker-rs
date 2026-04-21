@@ -13,15 +13,16 @@ use crate::{
     appcontext::{get_global_context, Device, GemmType},
     linarg::{
         mm256::{
-            add_avx2, apply_relu_avx2_from_src, apply_sigmoid_avx2_from_src,
-            apply_silu_avx2_from_src, div_avx2, gemm_bias_blocked_avx2, mul_avx2, sub_avx2,
+            add_avx2, apply_leaky_relu_avx2_from_src, apply_relu_avx2_from_src,
+            apply_sigmoid_avx2_from_src, apply_silu_avx2_from_src, div_avx2,
+            gemm_bias_blocked_avx2, mul_avx2, sub_avx2,
         },
         mm512::{
-            add_avx512, apply_relu_avx512_from_src, apply_sigmoid_avx512_from_src,
-            apply_silu_avx512_from_src, div_avx512, gemm_bias_blocked_scalar, mul_avx512,
-            sub_avx512,
+            add_avx512, apply_leaky_relu_avx512_from_src, apply_relu_avx512_from_src,
+            apply_sigmoid_avx512_from_src, apply_silu_avx512_from_src, div_avx512,
+            gemm_bias_blocked_scalar, mul_avx512, sub_avx512,
         },
-        utils::{aprox_sigmoid_f32, aprox_silu_f32, relu_f32},
+        utils::{aprox_sigmoid_f32, aprox_silu_f32, leaky_relu_f32, relu_f32},
     },
 };
 
@@ -103,6 +104,26 @@ apply_activation_from_src!(
     apply_sigmoid_avx512_from_src,
     aprox_sigmoid_f32
 );
+
+pub fn apply_leaky_relu(dst: &mut [f32], alpha: f32, src: &[f32]) {
+    let context = get_global_context();
+    let len = dst.len();
+    let dst_ptr = dst.as_mut_ptr();
+    let src_ptr = src.as_ptr();
+    match context.get_gemm_type() {
+        GemmType::Avx2 => {
+            unsafe { apply_leaky_relu_avx2_from_src(dst_ptr, alpha, src_ptr, len) };
+        }
+        GemmType::Avx512 => unsafe {
+            apply_leaky_relu_avx512_from_src(dst_ptr, alpha, src_ptr, len);
+        },
+        _ => {
+            dst.par_iter_mut()
+                .zip(src.par_iter())
+                .for_each(|(d, s)| *d = leaky_relu_f32(*s, alpha));
+        }
+    }
+}
 
 macro_rules! something_maybe_simd {
     ($func_name:ident, $axv2_func:ident, $avx512_func:ident, $op:tt) => {
