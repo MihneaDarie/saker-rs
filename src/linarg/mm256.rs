@@ -3,6 +3,12 @@ use rayon::prelude::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
+use crate::linarg::utils::aprox_sigmoid_f32;
+use crate::linarg::utils::aprox_silu_f32;
+#[cfg(target_arch = "x86_64")]
+use crate::linarg::utils::leaky_relu_f32;
+use crate::linarg::utils::relu_f32;
+
 #[cfg(target_arch = "x86_64")]
 use crate::{
     accumulate_simd, activations::Activation, fmadd_ps_simd, set1_ps_simd, set_zero_simd,
@@ -98,11 +104,14 @@ unsafe fn micro_kernel_8x8_avx2(
 #[target_feature(enable = "avx2,fma")]
 unsafe fn apply_bias_avx2(c: *mut f32, n: usize, bias: f32) {
     let bias_v = _mm256_set1_ps(bias);
-
+    let safe_n = n - (n % 8);
     unsafe {
-        for i in (0..n).step_by(8) {
+        for i in (0..safe_n).step_by(8) {
             let val = _mm256_loadu_ps(c.add(i));
             _mm256_storeu_ps(c.add(i), _mm256_add_ps(val, bias_v));
+        }
+        for i in safe_n..n {
+            *c.add(i) = *c.add(i) + bias;
         }
     }
 }
@@ -219,7 +228,7 @@ pub unsafe fn gemm_bias_blocked_avx2(
                 });
             }
             Activation::LeakyRelu(alpha) => {
-                c.par_chunks_mut(n).enumerate().for_each(|(i, row)| unsafe {
+                c.par_chunks_mut(n).for_each(|row| unsafe {
                     apply_leaky_relu_avx2(row.as_mut_ptr(), alpha, n);
                 });
             }
@@ -314,100 +323,139 @@ pub unsafe fn sigmoid_avx2(x: __m256) -> __m256 {
 }
 
 macro_rules! unsafe_apply_activation_and_bias_avx2 {
-    ($func_name:ident, $avx2_activation_func:ident) => {
+    ($func_name:ident, $avx2_activation_func:ident, $scalar_activation_func:ident) => {
         #[cfg(target_arch = "x86_64")]
         #[target_feature(enable = "avx2,fma")]
         unsafe fn $func_name(c: *mut f32, n: usize, bias: f32) {
             let bias_v = _mm256_set1_ps(bias);
+            let safe_n = n - (n % 8);
             unsafe {
-                for i in (0..n).step_by(8) {
+                for i in (0..safe_n).step_by(8) {
                     let val = _mm256_loadu_ps(c.add(i));
                     let activated = $avx2_activation_func(_mm256_add_ps(val, bias_v));
                     _mm256_storeu_ps(c.add(i), activated);
+                }
+                for i in safe_n..n {
+                    let v = *c.add(i) + bias;
+                    *c.add(i) = $scalar_activation_func(v);
                 }
             }
         }
     };
 }
 
-unsafe_apply_activation_and_bias_avx2!(apply_sigmoid_and_bias_avx2, sigmoid_avx2);
-unsafe_apply_activation_and_bias_avx2!(apply_silu_and_bias_avx2, silu_avx2);
-unsafe_apply_activation_and_bias_avx2!(apply_relu_and_bias_avx2, relu_avx2);
+unsafe_apply_activation_and_bias_avx2!(
+    apply_sigmoid_and_bias_avx2,
+    sigmoid_avx2,
+    aprox_sigmoid_f32
+);
+unsafe_apply_activation_and_bias_avx2!(apply_silu_and_bias_avx2, silu_avx2, aprox_silu_f32);
+unsafe_apply_activation_and_bias_avx2!(apply_relu_and_bias_avx2, relu_avx2, relu_f32);
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 unsafe fn apply_leaky_relu_and_bias_avx2(c: *mut f32, alpha: f32, n: usize, bias: f32) {
     let bias_v = _mm256_set1_ps(bias);
+    let safe_n = n - (n % 8);
     unsafe {
-        for i in (0..n).step_by(8) {
+        for i in (0..safe_n).step_by(8) {
             let val = _mm256_loadu_ps(c.add(i));
             let activated = leaky_relu_avx2(_mm256_add_ps(val, bias_v), alpha);
             _mm256_storeu_ps(c.add(i), activated);
+        }
+        for i in safe_n..n {
+            let v = *c.add(i) + bias;
+            *c.add(i) = leaky_relu_f32(v, alpha);
         }
     }
 }
 
 macro_rules! unsafe_apply_activation_avx2 {
-    ($func_name:ident, $avx2_activation_func:ident) => {
+    ($func_name:ident, $avx2_activation_func:ident, $scalar_activation_func:ident) => {
         #[cfg(target_arch = "x86_64")]
         #[target_feature(enable = "avx2,fma")]
         pub unsafe fn $func_name(dst: *mut f32, n: usize) {
+            let safe_n = n - (n % 8);
             unsafe {
-                for i in (0..n).step_by(8) {
+                for i in (0..safe_n).step_by(8) {
                     let val = _mm256_loadu_ps(dst.add(i));
                     let activated = $avx2_activation_func(val);
                     _mm256_storeu_ps(dst.add(i), activated);
+                }
+                for i in safe_n..n {
+                    let v = *dst.add(i);
+                    *dst.add(i) = $scalar_activation_func(v);
                 }
             }
         }
     };
 }
 
-unsafe_apply_activation_avx2!(apply_sigmoid_avx2, sigmoid_avx2);
-unsafe_apply_activation_avx2!(apply_silu_avx2, silu_avx2);
-unsafe_apply_activation_avx2!(apply_relu_avx2, relu_avx2);
+unsafe_apply_activation_avx2!(apply_sigmoid_avx2, sigmoid_avx2, aprox_sigmoid_f32);
+unsafe_apply_activation_avx2!(apply_silu_avx2, silu_avx2, aprox_silu_f32);
+unsafe_apply_activation_avx2!(apply_relu_avx2, relu_avx2, relu_f32);
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 pub unsafe fn apply_leaky_relu_avx2(dst: *mut f32, alpha: f32, n: usize) {
     unsafe {
-        for i in (0..n).step_by(8) {
+        let safe_n = n - (n % 8);
+        for i in (0..safe_n).step_by(8) {
             let val = _mm256_loadu_ps(dst.add(i));
             let activated = leaky_relu_avx2(val, alpha);
             _mm256_storeu_ps(dst.add(i), activated);
+        }
+        for i in safe_n..n {
+            let v = *dst.add(i);
+            *dst.add(i) = leaky_relu_f32(v, alpha);
         }
     }
 }
 
 macro_rules! unsafe_apply_activation_from_src_avx2 {
-    ($func_name:ident, $avx2_activation_func:ident) => {
+    ($func_name:ident, $avx2_activation_func:ident,  $scalar_activation_func:ident) => {
         #[cfg(target_arch = "x86_64")]
         #[target_feature(enable = "avx2,fma")]
         pub unsafe fn $func_name(dst: *mut f32, src: *const f32, n: usize) {
+            let safe_n = n - (n % 8);
             unsafe {
-                for i in (0..n).step_by(8) {
+                for i in (0..safe_n).step_by(8) {
                     let val = _mm256_loadu_ps(src.add(i));
                     let activated = $avx2_activation_func(val);
                     _mm256_storeu_ps(dst.add(i), activated);
+                }
+                for i in safe_n..n {
+                    let v = *src.add(i);
+                    *dst.add(i) = $scalar_activation_func(v);
                 }
             }
         }
     };
 }
 
-unsafe_apply_activation_from_src_avx2!(apply_sigmoid_avx2_from_src, sigmoid_avx2);
-unsafe_apply_activation_from_src_avx2!(apply_silu_avx2_from_src, silu_avx2);
-unsafe_apply_activation_from_src_avx2!(apply_relu_avx2_from_src, relu_avx2);
+unsafe_apply_activation_from_src_avx2!(
+    apply_sigmoid_avx2_from_src,
+    sigmoid_avx2,
+    aprox_sigmoid_f32
+);
+unsafe_apply_activation_from_src_avx2!(apply_silu_avx2_from_src, silu_avx2, aprox_silu_f32);
+unsafe_apply_activation_from_src_avx2!(apply_relu_avx2_from_src, relu_avx2, relu_f32);
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 pub unsafe fn apply_leaky_relu_avx2_from_src(dst: *mut f32, alpha: f32, src: *const f32, n: usize) {
+    let safe_n = n - (n % 8);
+
     unsafe {
-        for i in (0..n).step_by(8) {
+        for i in (0..safe_n).step_by(8) {
             let val = _mm256_loadu_ps(src.add(i));
             let activated = leaky_relu_avx2(val, alpha);
             _mm256_storeu_ps(dst.add(i), activated);
         }
+    }
+    for i in safe_n..n {
+        let v = *src.add(i);
+        *dst.add(i) = leaky_relu_f32(v, alpha);
     }
 }
 
