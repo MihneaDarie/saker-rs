@@ -13,19 +13,27 @@ pub enum Device {
 pub enum GemmType {
     Avx2,
     Avx512,
+    Neon,
     Scalar,
     None,
 }
 
 impl Default for GemmType {
     fn default() -> Self {
-        if std::is_x86_feature_detected!("avx512f") {
-            Self::Avx512
-        } else if std::is_x86_feature_detected!("avx2") {
-            Self::Avx2
-        } else {
-            Self::Scalar
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
+            if std::is_x86_feature_detected!("avx512f") {
+                Self::Avx512
+            } else if std::is_x86_feature_detected!("avx2") {
+                Self::Avx2
+            } else {
+                Self::Scalar
+            }
         }
+
+        
+        #[cfg(target_arch = "aarch64")] {
+            Self::Neon
+        }        
     }
 }
 
@@ -143,43 +151,45 @@ impl AppContext {
     }
 
     pub fn check_context_compatibility(&mut self) -> Result<(), String> {
-        if self.device == Device::Gpu && self.gemm_type != GemmType::None {
-            return Err("Can't use cpu features on gpu !".to_string());
-        }
+    if self.device == Device::Gpu && self.gemm_type != GemmType::None {
+        return Err("Can't use cpu features on gpu!".to_string());
+    }
 
-        if self.device == Device::Cpu {
-            match self.gemm_type {
-                GemmType::Avx2 => {
+    if self.device == Device::Cpu {
+        match self.gemm_type {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            GemmType::Avx2 => {
+                if !std::is_x86_feature_detected!("avx2")
+                    || !std::is_x86_feature_detected!("fma")
+                {
+                    println!("AVX2 selected but not available, switching to scalar!");
+                    self.gemm_type = GemmType::Scalar;
+                }
+            }
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            GemmType::Avx512 => {
+                if !std::is_x86_feature_detected!("fma")
+                    || !std::is_x86_feature_detected!("avx512f")
+                {
+                    self.gemm_type = GemmType::Avx2;
                     if !std::is_x86_feature_detected!("avx2")
                         || !std::is_x86_feature_detected!("fma")
                     {
-                        println!("AVX2 selected but it is not avaible, switching to scalar !");
+                        println!("AVX512 not available, neither AVX2, switching to scalar!");
                         self.gemm_type = GemmType::Scalar;
+                    } else {
+                        println!("AVX512 not available, switching to AVX2!");
                     }
                 }
-                GemmType::Avx512 => {
-                    if !std::is_x86_feature_detected!("fma")
-                        || !std::is_x86_feature_detected!("avx512f")
-                    {
-                        let mut message =
-                            "AVX512f selected but it is not avaible, switching to avx2 !"
-                                .to_string();
-                        self.gemm_type = GemmType::Avx2;
-                        if !std::is_x86_feature_detected!("avx2")
-                            || !std::is_x86_feature_detected!("fma")
-                        {
-                            message = "AVX512f selected but it is not avaible, neither avx2, switching to scalar !".to_string();
-                            self.gemm_type = GemmType::Scalar;
-                        }
-                        println!("{message}");
-                    }
-                }
-                _ => {}
             }
+            #[cfg(target_arch = "aarch64")]
+            GemmType::Neon => {}
+            _ => {}
         }
-
-        Ok(())
     }
+
+    Ok(())
+}
 }
 
 static GLOBAL_CONTEXT: OnceLock<AppContext> = OnceLock::new();
