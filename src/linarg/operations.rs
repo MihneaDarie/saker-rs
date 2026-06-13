@@ -9,7 +9,7 @@ use rayon::{
 use crate::{
     activations::Activation,
     appcontext::{get_global_context, Device, GemmType},
-    linarg::mm512::gemm_bias_blocked_scalar
+    linarg::mm512::gemm_bias_blocked_scalar,
 };
 
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
@@ -27,11 +27,11 @@ use crate::linarg::{
 };
 
 #[cfg(any(target_arch = "aarch64"))]
-use crate::linarg::
-    neon::{
-        add_neon, apply_leaky_relu_neon_from_src, apply_relu_neon_from_src,
-        apply_sigmoid_neon_from_src,apply_silu_neon_from_src, div_neon, gemm_bias_blocked_neon, mul_neon, sub_neon
-    };
+use crate::linarg::neon::{
+    add_neon, apply_leaky_relu_neon_from_src, apply_relu_neon_from_src,
+    apply_sigmoid_neon_from_src, apply_silu_neon_from_src, div_neon, gemm_bias_blocked_neon,
+    mul_neon, sub_neon,
+};
 
 use crate::linarg::utils::{aprox_sigmoid_f32, aprox_silu_f32, leaky_relu_f32, relu_f32};
 
@@ -55,11 +55,12 @@ pub fn sgemm_bias_parallel(
         match context.get_gemm_type() {
             #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
             GemmType::Avx512 => unsafe {
-                gemm_bias_blocked_avx512(m, n, k, a, b, bias, c, activation) },
+                gemm_bias_blocked_avx512(m, n, k, a, b, bias, c, activation)
+            },
             #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
             GemmType::Avx2 => unsafe { gemm_bias_blocked_avx2(m, n, k, a, b, bias, c, activation) },
             #[cfg(target_arch = "aarch64")]
-            GemmType::Neon => unsafe { gemm_bias_blocked_neon(m, n, k, a, b, bias, c, activation) }
+            GemmType::Neon => unsafe { gemm_bias_blocked_neon(m, n, k, a, b, bias, c, activation) },
             _ => gemm_bias_blocked_scalar(m, n, k, a, b, bias, c, activation),
         }
     }
@@ -127,7 +128,7 @@ pub fn apply_leaky_relu(dst: &mut [f32], alpha: f32, src: &[f32]) {
             apply_leaky_relu_avx512_from_src(dst_ptr, alpha, src_ptr, len)
         },
         #[cfg(target_arch = "aarch64")]
-                GemmType::Neon => unsafe { apply_leaky_relu_neon_from_src(dst_ptr, alpha, src_ptr, len) },
+        GemmType::Neon => unsafe { apply_leaky_relu_neon_from_src(dst_ptr, alpha, src_ptr, len) },
         _ => {
             dst.par_iter_mut()
                 .zip(src.par_iter())

@@ -109,8 +109,8 @@ unsafe fn micro_kernel_8x8_neon(
     accumulate: bool,
 ) {
     set_zero_neon!(
-        c0_0, c1_0, c2_0, c3_0, c4_0, c5_0, c6_0, c7_0,
-        c0_1, c1_1, c2_1, c3_1, c4_1, c5_1, c6_1, c7_1,
+        c0_0, c1_0, c2_0, c3_0, c4_0, c5_0, c6_0, c7_0, c0_1, c1_1, c2_1, c3_1, c4_1, c5_1, c6_1,
+        c7_1,
     );
 
     unsafe {

@@ -1,4 +1,3 @@
-
 mod macros;
 mod mm256;
 mod mm512;
