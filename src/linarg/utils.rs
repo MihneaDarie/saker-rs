@@ -43,6 +43,10 @@ pub fn relu_f32(x: f32) -> f32 {
 pub fn leaky_relu_f32(x: f32, alpha: f32) -> f32 {
     x.max(x * alpha)
 }
+#[inline(always)]
+pub fn leaky_relu_f64(x: f64, alpha: f64) -> f64 {
+    x.max(x * alpha)
+}
 
 #[inline(always)]
 pub fn relu_f64(x: f64) -> f64 {

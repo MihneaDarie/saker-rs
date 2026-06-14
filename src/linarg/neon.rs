@@ -171,9 +171,6 @@ pub unsafe fn gemm_bias_blocked_neon(
     c: &mut [f32],
     activation: Activation,
 ) {
-    if let Some(bb) = bias {
-        debug_assert_eq!(bb.len(), m);
-    }
 
     let lda = k;
     let ldb = n;

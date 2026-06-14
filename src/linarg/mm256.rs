@@ -127,9 +127,6 @@ pub unsafe fn gemm_bias_blocked_avx2(
     c: &mut [f32],
     activation: Activation,
 ) {
-    if let Some(bb) = bias {
-        debug_assert_eq!(bb.len(), m);
-    }
 
     let lda = k;
     let ldb = n;
