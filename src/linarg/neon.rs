@@ -12,11 +12,31 @@ use crate::linarg::utils::relu_f32;
 #[cfg(target_arch = "aarch64")]
 use crate::activations::Activation;
 
-const MC: usize = 64;
-const KC: usize = 256;
-const NC: usize = 256;
-const MR: usize = 8;
-const NR: usize = 8;
+macro_rules! env_usize {
+    ($key:literal) => {{
+        const S: &str = env!($key);
+        const V: usize = {
+            let b = S.as_bytes();
+            assert!(!b.is_empty(), "env var is empty");
+            let mut v = 0usize;
+            let mut i = 0;
+            while i < b.len() {
+                let digit = b[i];
+                assert!(digit >= b'0' && digit <= b'9', "env var contains non-digit byte");
+                v = v * 10 + (digit - b'0') as usize;
+                i += 1;
+            }
+            v
+        };
+        V
+    }};
+}
+
+pub const MC: usize = env_usize!("SAKER_MC");
+pub const KC: usize = env_usize!("SAKER_KC");
+pub const NC: usize = env_usize!("SAKER_NC");
+pub const MR: usize = env_usize!("SAKER_MR");
+pub const NR: usize = env_usize!("SAKER_NR");
 
 #[inline(always)]
 unsafe fn micro_kernel_8x8_scalar(

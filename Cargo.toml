@@ -7,3 +7,6 @@ license = "MIT"
 
 [dependencies]
 rayon = "1.11.0"
+
+[target.'cfg(all(target_arch = "aarch64", target_os = "macos"))'.build-dependencies]
+libc = "0.2"
