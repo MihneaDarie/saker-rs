@@ -28,14 +28,15 @@ impl GemmBlocking {
         let mut l1_div = 2;
         
         let (mut mr, mut nr) = (4,4);
+
         #[cfg(target_arch = "x86_64")]
-        {
+        {   l1_div = 4;
+            (mc_div, mc_max) = (2, 64);
+            (nc_div, nc_max) = (2, 256);
+
             (mr, nr) = if std::is_x86_feature_detected!("avx512f") {
-                l1_div = 4;
-                (mc_div, mc_max) = (2, 64);
-                (nc_div, nc_max) = (2, 256)
                 (16, 16)
-            } else if srd::is_x86_feature_detected!("avx2") {
+            } else if std::is_x86_feature_detected!("avx2") {
                 (8, 8)
             } else {
                 (4, 4)
@@ -78,9 +79,13 @@ fn query_caches() -> CacheParams {
         let (eax, ebx, ecx, _edx): (u32, u32, u32, u32);
         unsafe {
             std::arch::asm!(
+                "mov {tmp}, rbx",
                 "cpuid",
+                "mov {ebx_out:e}, ebx",
+                "mov rbx, {tmp}",
+                tmp        = out(reg) _,
+                ebx_out    = out(reg) ebx,
                 inout("eax") 4u32 => eax,
-                inout("ebx") 0u32 => ebx,
                 inout("ecx") subleaf => ecx,
                 out("edx") _edx,
                 options(nostack, preserves_flags),
@@ -109,22 +114,8 @@ fn query_caches() -> CacheParams {
     if l1 == 0 { l1 = 32  * 1024; }
     if l2 == 0 { l2 = 256 * 1024; }
     if l3 == 0 { l3 = 8   * 1024 * 1024; }
-
-    let has_avx512f: bool;
-    unsafe {
-        let ebx: u32;
-        std::arch::asm!(
-            "cpuid",
-            inout("eax") 7u32 => _,
-            out("ebx") ebx,
-            inout("ecx") 0u32 => _,
-            out("edx") _,
-            options(nostack, preserves_flags),
-        );
-        has_avx512f = (ebx >> 16) & 1 == 1;
-    }
-
-    CacheParams { l1_bytes: l1, l2_bytes: l2, l3_bytes: l3, has_avx512f }
+ 
+    CacheParams { l1_bytes: l1, l2_bytes: l2, l3_bytes: l3 }
 }
 
 

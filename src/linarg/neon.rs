@@ -3,6 +3,7 @@ use rayon::prelude::*;
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::*;
 
+use crate::env_usize;
 use crate::linarg::utils::aprox_sigmoid_f32;
 use crate::linarg::utils::aprox_silu_f32;
 #[cfg(target_arch = "aarch64")]
@@ -11,26 +12,6 @@ use crate::linarg::utils::relu_f32;
 
 #[cfg(target_arch = "aarch64")]
 use crate::activations::Activation;
-
-macro_rules! env_usize {
-    ($key:literal) => {{
-        const S: &str = env!($key);
-        const V: usize = {
-            let b = S.as_bytes();
-            assert!(!b.is_empty(), "env var is empty");
-            let mut v = 0usize;
-            let mut i = 0;
-            while i < b.len() {
-                let digit = b[i];
-                assert!(digit >= b'0' && digit <= b'9', "env var contains non-digit byte");
-                v = v * 10 + (digit - b'0') as usize;
-                i += 1;
-            }
-            v
-        };
-        V
-    }};
-}
 
 pub const MC: usize = env_usize!("SAKER_MC");
 pub const KC: usize = env_usize!("SAKER_KC");

@@ -9,13 +9,13 @@ use crate::{
     linarg::utils::{aprox_silu_f32, leaky_relu_f32, relu_f32},
     set1_ps_simd, set_zero_simd, storeu_ps_simd,
 };
-use crate::{activations::Activation, linarg::utils::aprox_sigmoid_f32};
+use crate::{activations::Activation, env_usize, linarg::utils::aprox_sigmoid_f32};
 
-const MC: usize = 64;
-const KC: usize = 256;
-const NC: usize = 256;
-const MR: usize = 16;
-const NR: usize = 16;
+pub const MC: usize = env_usize!("SAKER_MC");
+pub const KC: usize = env_usize!("SAKER_KC");
+pub const NC: usize = env_usize!("SAKER_NC");
+pub const MR: usize = env_usize!("SAKER_MR");
+pub const NR: usize = env_usize!("SAKER_NR");
 
 #[inline(always)]
 unsafe fn micro_kernel_16x16_scalar(

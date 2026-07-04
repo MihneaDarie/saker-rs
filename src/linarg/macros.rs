@@ -52,3 +52,26 @@ macro_rules! fmadd_ps_simd {
         )+
     };
 }
+
+
+
+#[macro_export]
+macro_rules! env_usize {
+    ($key:literal) => {{
+        const S: &str = env!($key);
+        const V: usize = {
+            let b = S.as_bytes();
+            assert!(!b.is_empty(), "env var is empty");
+            let mut v = 0usize;
+            let mut i = 0;
+            while i < b.len() {
+                let digit = b[i];
+                assert!(digit >= b'0' && digit <= b'9', "env var contains non-digit byte");
+                v = v * 10 + (digit - b'0') as usize;
+                i += 1;
+            }
+            v
+        };
+        V
+    }};
+}

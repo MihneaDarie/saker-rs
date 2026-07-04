@@ -3,6 +3,7 @@ use rayon::prelude::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
+use crate::env_usize;
 use crate::linarg::utils::aprox_sigmoid_f32;
 use crate::linarg::utils::aprox_silu_f32;
 #[cfg(target_arch = "x86_64")]
@@ -15,11 +16,11 @@ use crate::{
     storeu_ps_simd,
 };
 
-const MC: usize = 64;
-const KC: usize = 256;
-const NC: usize = 256;
-const MR: usize = 8;
-const NR: usize = 8;
+pub const MC: usize = env_usize!("SAKER_MC");
+pub const KC: usize = env_usize!("SAKER_KC");
+pub const NC: usize = env_usize!("SAKER_NC");
+pub const MR: usize = env_usize!("SAKER_MR");
+pub const NR: usize = env_usize!("SAKER_NR");
 
 #[inline(always)]
 unsafe fn micro_kernel_8x8_scalar(
