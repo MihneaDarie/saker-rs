@@ -8,7 +8,7 @@ use rayon::{
 
 use crate::{
     activations::Activation,
-    appcontext::{get_global_context, Device, GemmType},
+    appcontext::{get_global_context, GemmType},
     linarg::mm512::gemm_bias_blocked_scalar,
 };
 
@@ -51,18 +51,16 @@ pub fn sgemm_bias_parallel(
 
     let context = get_global_context();
 
-    if context.get_device() == Device::Cpu {
-        match context.get_gemm_type() {
-            #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-            GemmType::Avx512 => unsafe {
-                gemm_bias_blocked_avx512(m, n, k, a, b, bias, c, activation)
-            },
-            #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-            GemmType::Avx2 => unsafe { gemm_bias_blocked_avx2(m, n, k, a, b, bias, c, activation) },
-            #[cfg(target_arch = "aarch64")]
-            GemmType::Neon => unsafe { gemm_bias_blocked_neon(m, n, k, a, b, bias, c, activation) },
-            _ => gemm_bias_blocked_scalar(m, n, k, a, b, bias, c, activation),
-        }
+    match context.get_gemm_type() {
+        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+        GemmType::Avx512 => unsafe {
+            gemm_bias_blocked_avx512(m, n, k, a, b, bias, c, activation)
+        },
+        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+        GemmType::Avx2 => unsafe { gemm_bias_blocked_avx2(m, n, k, a, b, bias, c, activation) },
+        #[cfg(target_arch = "aarch64")]
+        GemmType::Neon => unsafe { gemm_bias_blocked_neon(m, n, k, a, b, bias, c, activation) },
+        _ => gemm_bias_blocked_scalar(m, n, k, a, b, bias, c, activation),
     }
 }
 

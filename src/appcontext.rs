@@ -1,21 +1,12 @@
 use std::{collections::HashSet, sync::OnceLock};
 
 #[repr(u8)]
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Device {
-    #[default]
-    Cpu,
-    Gpu,
-}
-
-#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GemmType {
     Avx2,
     Avx512,
     Neon,
     Scalar,
-    None,
 }
 
 impl Default for GemmType {
@@ -40,18 +31,10 @@ impl Default for GemmType {
 
 #[derive(Default, Debug)]
 pub struct AppContext {
-    device: Device,
     gemm_type: GemmType,
 }
 
 impl AppContext {
-    fn new(device: Device, gemm_type: GemmType) -> Self {
-        Self { device, gemm_type }
-    }
-
-    pub fn get_device(&self) -> Device {
-        self.device
-    }
 
     pub fn get_gemm_type(&self) -> GemmType {
         self.gemm_type
@@ -64,132 +47,45 @@ impl AppContext {
             return Ok(context);
         }
 
-        if args.len().is_multiple_of(2) {
-            return Err("Odd number of arguments !".to_string());
+        for flag in args.iter() {
+
+            context.gemm_type = match flag.as_str() {
+                "--AVX2" => GemmType::Avx2,
+                "--AVX512" => GemmType::Avx512,
+                "--Neon" => GemmType::Neon,
+                "--Scalar" => GemmType::Scalar,
+                _ => {context.gemm_type}
+            };
         }
-
-        let mut seen_flags = HashSet::new();
-        for i in (0..args.len()).step_by(2) {
-            if !seen_flags.insert(&args[i]) {
-                return Err(format!("Duplicate flag: {}", args[i]));
-            }
-        }
-
-        let valid_args: HashSet<&str> = ["--camera", "-c", "--device", "-d", "--type", "-t"]
-            .into_iter()
-            .collect();
-
-        for i in (0..args.len()).step_by(2) {
-            let flag = &args[i];
-            let value = &args[i + 1];
-
-            if !valid_args.contains(flag.as_str()) {
-                return Err(format!("Invalid argument {}
-                \n Valid arguments are: [--camera , -c, --device, -d, --type, -t]
-                \n|--camera, -c| -> select the camera from you computer you would like to use
-                \n|--device, -d| Select the device ypu wuold like the model to run on (CPU(default)/GPU)
-                \n|--type, -t| If the used device is the CPU you can choose what type of gemm you model is using",
-                flag));
-            }
-
-            if args.contains(&String::from("gpu"))
-                && (args.contains(&String::from("--type")) || args.contains(&String::from("-t")))
-            {
-                return Err("Can't set cpu specific features for gpu usage !".to_string());
-            }
-
-            if !flag.starts_with('-') {
-                return Err(format!("Expected a flag, got: {}", flag));
-            }
-
-            if value.starts_with('-') {
-                return Err(format!(
-                    "Expected a value after {}, got another flag: {}",
-                    flag, value,
-                ));
-            }
-
-            match flag.as_str() {
-                "--device" | "-d" => {
-                    context.device = match value.to_lowercase().as_str() {
-                        "cpu" => {
-                            context.gemm_type = GemmType::Avx2;
-                            Device::Cpu
-                        }
-                        "gpu" => {
-                            context.gemm_type = GemmType::None;
-                            Device::Gpu
-                        }
-                        _ => {
-                            return Err(format!(
-                                "Unknown device type: {}. Use 'cpu' or 'gpu'.",
-                                value
-                            ));
-                        }
-                    };
+        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))] {
+            if context.gemm_type == GemmType::Avx512 && !std::is_x86_feature_detected!("avx512f") {
+                context.gemm_type = if std::is_x86_feature_detected!("avx2") {
+                    GemmType::Avx2
+                } else {
+                    GemmType::Scalar
                 }
-                "--type" | "-t" => {
-                    context.gemm_type = match value.to_lowercase().as_str() {
-                        "avx2" => GemmType::Avx2,
-                        "avx512" => GemmType::Avx512,
-                        "scalar" => GemmType::Scalar,
-                        _ => {
-                            return Err(format!(
-                                "Unknown GEMM type: {}. Use 'scalar', 'avx2', or 'avx512'.",
-                                value
-                            ));
-                        }
-                    };
+            } else if !std::is_x86_feature_detected!("avx2") && context.gemm_type == GemmType::Avx2 {
+                context.gemm_type = GemmType::Scalar;
+            } else if context.gemm_type == GemmType::Neon {
+                context.gemm_type = if std::is_x86_feature_detected!("avx512f") {
+                    GemmType::Avx512
+                } else if std::is_x86_feature_detected!("avx2") {
+                    GemmType::Avx2
+                } else {
+                    GemmType::Scalar
                 }
-                _ => {}
+            } else {
+                context.gemm_type = GemmType::Scalar;
             }
         }
 
-        match context.check_context_compatibility() {
-            Ok(()) => Ok(context),
-            Err(e) => Err(e),
-        }
-    }
-
-    pub fn check_context_compatibility(&mut self) -> Result<(), String> {
-        if self.device == Device::Gpu && self.gemm_type != GemmType::None {
-            return Err("Can't use cpu features on gpu!".to_string());
+        #[cfg(target_arch = "aarch64")]{
+            if context.gemm_type != GemmType::Neon || context.gemm_type != GemmType::Scalar {
+                context.gemm_type = GemmType::Neon;
+            } 
         }
 
-        if self.device == Device::Cpu {
-            match self.gemm_type {
-                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-                GemmType::Avx2 => {
-                    if !std::is_x86_feature_detected!("avx2")
-                        || !std::is_x86_feature_detected!("fma")
-                    {
-                        println!("AVX2 selected but not available, switching to scalar!");
-                        self.gemm_type = GemmType::Scalar;
-                    }
-                }
-                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-                GemmType::Avx512 => {
-                    if !std::is_x86_feature_detected!("fma")
-                        || !std::is_x86_feature_detected!("avx512f")
-                    {
-                        self.gemm_type = GemmType::Avx2;
-                        if !std::is_x86_feature_detected!("avx2")
-                            || !std::is_x86_feature_detected!("fma")
-                        {
-                            println!("AVX512 not available, neither AVX2, switching to scalar!");
-                            self.gemm_type = GemmType::Scalar;
-                        } else {
-                            println!("AVX512 not available, switching to AVX2!");
-                        }
-                    }
-                }
-                #[cfg(target_arch = "aarch64")]
-                GemmType::Neon => {}
-                _ => {}
-            }
-        }
-
-        Ok(())
+        Ok(context)
     }
 }
 

@@ -4,9 +4,9 @@ use std::env;
 use std::fs;
 
 struct CacheParams {
-    l1_bytes:    u64,
-    l2_bytes:    u64,
-    l3_bytes:    u64,
+    l1_bytes: u64,
+    l2_bytes: u64,
+    l3_bytes: u64,
 }
 
 struct GemmBlocking {
@@ -83,8 +83,8 @@ fn query_caches() -> CacheParams {
                 "cpuid",
                 "mov {ebx_out:e}, ebx",
                 "mov rbx, {tmp}",
-                tmp        = out(reg) _,
-                ebx_out    = out(reg) ebx,
+                tmp = out(reg) _,
+                ebx_out = out(reg) ebx,
                 inout("eax") 4u32 => eax,
                 inout("ecx") subleaf => ecx,
                 out("edx") _edx,
@@ -96,12 +96,12 @@ fn query_caches() -> CacheParams {
         if cache_type == 0 { break; }
         if cache_type == 2 { continue; }
 
-        let level      = (eax >> 5) & 0x7;
-        let line_size  = ((ebx & 0xfff) + 1) as u64;
+        let level = (eax >> 5) & 0x7;
+        let line_size = ((ebx & 0xfff) + 1) as u64;
         let partitions = (((ebx >> 12) & 0x3ff) + 1) as u64;
-        let ways       = (((ebx >> 22) & 0x3ff) + 1) as u64;
-        let sets       = (ecx as u64) + 1;
-        let size       = ways * partitions * line_size * sets;
+        let ways= (((ebx >> 22) & 0x3ff) + 1) as u64;
+        let sets = (ecx as u64) + 1;
+        let size = ways * partitions * line_size * sets;
 
         match level {
             1 => l1 = l1.max(size),
@@ -183,9 +183,9 @@ fn query_caches() -> CacheParams {
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn query_caches() -> CacheParams {
     CacheParams {
-        l1_bytes:    32  * 1024,
-        l2_bytes:    256 * 1024,
-        l3_bytes:    4   * 1024 * 1024,
+        l1_bytes: 32 * 1024,
+        l2_bytes: 256 * 1024,
+        l3_bytes: 4 * 1024 * 1024,
         has_avx512f: false,
     }
 }
